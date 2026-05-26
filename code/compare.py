@@ -5,8 +5,8 @@ import sys
 def main():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_csv = os.path.join(repo_root, 'support_tickets', 'output.csv')
-    airll_csv = os.path.join(repo_root, 'support_tickets', 'airll.csv')
-    comparison_csv = os.path.join(repo_root, 'support_tickets', 'comparison.csv')
+    airll_csv = os.path.join(repo_root, 'support_tickets', 'azur_model_5.csv')
+    comparison_csv = os.path.join(repo_root, 'support_tickets', 'comparison_azure.csv')
 
     if not os.path.exists(output_csv):
         print(f"File not found: {output_csv}")
