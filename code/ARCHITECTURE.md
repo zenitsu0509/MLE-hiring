@@ -237,3 +237,4 @@ Blending rules:
 **Homoglyph bypasses (FIXED):** An attacker could replace ASCII characters in injection patterns with visually identical Unicode characters (e.g., "іgnore" using Cyrillic "і"). This has been addressed in `safety.py` by the `_normalize_for_detection()` function which applies **NFKD Unicode normalization** before any pattern matching. The function generates an ASCII approximation of the text via NFKD decomposition + ASCII transliteration, and runs all injection regexes against this normalized copy — while keeping the original text untouched for PII masking and LLM prompting. This approach is safe for multilingual tickets because normalization only affects the detection pass, never the actual content sent to the LLM.
 
 In addition, the safety layer now also decodes and re-checks **hex-encoded**, **URL-encoded (percent-encoded)**, and **ROT13-encoded** payloads — covering the adversarial categories predicted in the hidden test set.
+T
