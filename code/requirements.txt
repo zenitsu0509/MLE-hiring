@@ -1,0 +1,8 @@
+rank-bm25
+google-generativeai
+groq
+openai
+python-dotenv
+langdetect
+pandas
+tqdm
