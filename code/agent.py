@@ -188,8 +188,7 @@ def _call_azure(system_prompt: str, user_prompt: str) -> dict:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=TEMPERATURE,
-        max_tokens=MAX_OUTPUT_TOKENS,
+        max_completion_tokens=MAX_OUTPUT_TOKENS,
     )
 
     raw = completion.choices[0].message.content

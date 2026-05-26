@@ -331,19 +331,31 @@ def main():
     df = pd.read_csv(SUPPORT_TICKETS_PATH)
     print(f"       Loaded {len(df)} tickets")
 
-    # ── Process tickets ──────────────────────────────────────────────────
-    print(f"\n[3/3] Processing tickets...\n")
-    results = []
+    import concurrent.futures
 
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing"):
+    # ── Process tickets ──────────────────────────────────────────────────
+    print(f"\n[3/3] Processing tickets with ThreadPoolExecutor...\n")
+    results = [None] * len(df)
+
+    def process_wrapper(args):
+        idx, row_dict = args
         ticket_num = idx + 1
         try:
-            result = process_ticket(row.to_dict(), retriever, valid_paths, ticket_num)
-            results.append(result)
+            res = process_ticket(row_dict, retriever, valid_paths, ticket_num)
+            return idx, res
         except Exception as e:
             print(f"  ❌ Ticket {ticket_num} FAILED: {e}")
             traceback.print_exc()
-            results.append(make_fallback_response(row.to_dict(), str(e)))
+            return idx, make_fallback_response(row_dict, str(e))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        futures = []
+        for idx, row in df.iterrows():
+            futures.append(executor.submit(process_wrapper, (idx, row.to_dict())))
+            
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(df), desc="Processing"):
+            idx, res = future.result()
+            results[idx] = res
 
     # ── Write output ─────────────────────────────────────────────────────
     output_df = pd.DataFrame(results)
