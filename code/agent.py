@@ -297,14 +297,25 @@ def _post_process_result(result: dict, max_bm25_score: float,
     except (ValueError, TypeError):
         conf = 0.5
 
-    # Dynamic calibration: blend LLM confidence with BM25 score
-    if max_bm25_score > 0:
-        if max_bm25_score >= 0.7:
-            conf = min(conf, 0.95)
-        elif max_bm25_score >= 0.4:
-            conf = min(conf * 0.95, 0.85)
+    # Dynamic calibration: Brier Score Optimization
+    if pii_detected_by_safety or rl in ("high", "critical"):
+        # We are extremely confident when escalating due to safety triggers
+        conf = 0.95
+    elif status == "escalated":
+        # Escalations (e.g. out of scope) are generally high confidence
+        conf = max(conf, 0.85)
+    else:
+        # For 'replied' tickets, confidence MUST be bounded by retrieval quality
+        if max_bm25_score > 0:
+            if max_bm25_score >= 0.7:
+                conf = min(conf, 0.92)  # High retrieval -> high cap
+            elif max_bm25_score >= 0.4:
+                conf = min(conf, 0.75)  # Moderate retrieval -> moderate cap
+            else:
+                conf = min(conf, 0.50)  # Weak retrieval -> low cap
         else:
-            conf = min(conf * 0.8, 0.70)
+            # Replied with no retrieved sources implies hallucination risk
+            conf = 0.30
 
     result["confidence_score"] = round(conf, 2)
 
