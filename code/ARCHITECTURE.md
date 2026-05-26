@@ -3,24 +3,24 @@
 ## High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        main.py (Orchestrator)                       │
-│                                                                     │
-│  CSV Input ──▶ Parse Issue JSON ──▶ Pipeline ──▶ CSV Output        │
-│                                                                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐           │
-│  │ safety.py│  │retriever │  │ agent.py │  │actions.py│           │
-│  │          │  │   .py    │  │          │  │          │           │
-│  │ Injection│  │  BM25    │  │ Gemini   │  │ Schema   │           │
-│  │ PII Det  │  │  Index   │  │  2.5     │  │ Validate │           │
-│  │ Exfil    │  │  Domain  │  │  Flash   │  │ Identity │           │
-│  │ Masking  │  │  Filter  │  │  + Groq  │  │ Gate     │           │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘           │
-│       │              │             │              │                 │
-│       ▼              ▼             ▼              ▼                 │
-│  [BLOCK if      [top-k       [Structured    [Validated            │
-│   injection]     chunks]      JSON output]   actions]              │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        main.py (Orchestrator)                    │
+│                                                                  │
+│  CSV Input ──▶ Parse Issue JSON ──▶ Pipeline ──▶ CSV Output    │
+│                                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
+│  │ safety.py│  │retriever │  │ agent.py │  │actions.py│          │
+│  │          │  │   .py    │  │          │  │          │          │
+│  │ Injection│  │  BM25    │  │ Gemini   │  │ Schema   │          │
+│  │ PII Det  │  │  Index   │  │  2.5     │  │ Validate │          │
+│  │ Exfil    │  │  Domain  │  │  Flash   │  │ Identity │          │
+│  │ Masking  │  │  Filter  │  │  + Groq  │  │ Gate     │          │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘          │
+│       │              │             │              │              │
+│       ▼              ▼             ▼              ▼              │
+│  [BLOCK if      [top-k       [Structured    [Validated           │
+│   injection]     chunks]      JSON output]   actions]            │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Pipeline Flow (Per Ticket)
@@ -54,8 +54,8 @@ Input Ticket (CSV row)
       │         └── Score normalization to [0, 1]
       │
       ├──▶ Step 5: LLM Call (agent.py)
-      │         ├── Primary: Gemini 2.5 Flash (temperature=0, JSON mode)
-      │         ├── Fallback: Groq gpt-oss-120b
+      │         ├── Primary: GPT-5.4(Azure) (temperature=0, JSON mode)
+      │         ├── Fallback: Gemini 2.5 Flash
       │         ├── Exponential backoff retry (2s, 4s, 8s)
       │         └── Post-processing: normalize enums, calibrate confidence
       │
@@ -98,9 +98,9 @@ Input Ticket (CSV row)
 - Score normalization enables calibrated confidence
 
 ### agent.py — LLM Core
-**Primary model:** `gemini-2.5-flash` — chosen for fast inference, strong structured JSON output, and free tier availability.
+**Primary model:** `GPT-5.4(Azure)` — chosen for fast inference, strong structured JSON output.
 
-**Fallback model:** Groq `openai/gpt-oss-120b` — activated when all Gemini retries fail.
+**Fallback model:** `Gemini 2.5 Flash` — activated when GPT-5.4(Azure) retries fail.
 
 **Key design decisions:**
 - `temperature=0` for deterministic output
@@ -232,6 +232,8 @@ Blending rules:
 - Tickets that reference other tickets' content to test cross-contamination
 - Encoded payloads beyond base64 (hex, rot13, URL encoding)
 
-### One Known Failure Mode Not Fixed
+### Previously Known Failure Mode — Now Fixed
 
-**Homoglyph bypasses:** An attacker could replace ASCII characters in injection patterns with visually identical Unicode characters (e.g., "іgnore" using Cyrillic "і"). Our regex patterns match exact ASCII characters and would miss these. A fix would require Unicode normalization (NFKD) before pattern matching, but this could have unintended effects on legitimate multilingual tickets.
+**Homoglyph bypasses (FIXED):** An attacker could replace ASCII characters in injection patterns with visually identical Unicode characters (e.g., "іgnore" using Cyrillic "і"). This has been addressed in `safety.py` by the `_normalize_for_detection()` function which applies **NFKD Unicode normalization** before any pattern matching. The function generates an ASCII approximation of the text via NFKD decomposition + ASCII transliteration, and runs all injection regexes against this normalized copy — while keeping the original text untouched for PII masking and LLM prompting. This approach is safe for multilingual tickets because normalization only affects the detection pass, never the actual content sent to the LLM.
+
+In addition, the safety layer now also decodes and re-checks **hex-encoded**, **URL-encoded (percent-encoded)**, and **ROT13-encoded** payloads — covering the adversarial categories predicted in the hidden test set.

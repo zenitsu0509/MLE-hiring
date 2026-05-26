@@ -7,6 +7,7 @@ any ticket text, and can short-circuit the pipeline entirely for adversarial inp
 """
 
 import re
+import unicodedata
 from typing import Tuple, Dict, List, Optional
 
 
@@ -86,9 +87,74 @@ INJECTION_PATTERNS = [
 _COMPILED_INJECTION = [re.compile(p, re.IGNORECASE | re.DOTALL) for p in INJECTION_PATTERNS]
 
 
-def detect_injection(text: str) -> Tuple[bool, Optional[str]]:
+def _normalize_for_detection(text: str) -> str:
+    """
+    Normalize text for injection detection ONLY.
+    Layer 1: NFKD decomposition + ASCII transliteration (covers most accents).
+    Layer 2: Unicode confusables table (covers Cyrillic/Greek lookalikes that
+             NFKD cannot resolve, e.g. Cyrillic 'і' → Latin 'i').
+    The normalized copy is used exclusively for pattern matching — original
+    text is preserved for PII masking and the LLM prompt.
+    """
+    # ── Layer 1: NFKD + ASCII transliteration ────────────────────────────
+    nfkd = unicodedata.normalize('NFKD', text)
+    ascii_approx = nfkd.encode('ascii', errors='ignore').decode('ascii')
+
+    # ── Layer 2: Confusables map (homoglyphs NFKD can't resolve) ─────────
+    _CONFUSABLES = str.maketrans({
+        # Cyrillic lookalikes
+        '\u0430': 'a',  # Cyrillic а
+        '\u0435': 'e',  # Cyrillic е
+        '\u0456': 'i',  # Cyrillic і
+        '\u043e': 'o',  # Cyrillic о
+        '\u0440': 'r',  # Cyrillic р
+        '\u0441': 'c',  # Cyrillic с
+        '\u0445': 'x',  # Cyrillic х
+        '\u0443': 'y',  # Cyrillic у
+        '\u0455': 's',  # Cyrillic ѕ
+        '\u0454': 'e',  # Cyrillic є
+        '\u0406': 'I',  # Cyrillic І
+        '\u0410': 'A',  # Cyrillic А
+        '\u0415': 'E',  # Cyrillic Е
+        '\u041e': 'O',  # Cyrillic О
+        '\u0420': 'R',  # Cyrillic Р
+        '\u0421': 'C',  # Cyrillic С
+        '\u0425': 'X',  # Cyrillic Х
+        '\u0423': 'Y',  # Cyrillic У
+        # Greek lookalikes
+        '\u03b1': 'a',  # Greek α
+        '\u03b5': 'e',  # Greek ε
+        '\u03bf': 'o',  # Greek ο
+        '\u03c1': 'r',  # Greek ρ
+        '\u03c5': 'u',  # Greek υ
+        '\u0391': 'A',  # Greek Α
+        '\u0392': 'B',  # Greek Β
+        '\u0395': 'E',  # Greek Ε
+        '\u039a': 'K',  # Greek Κ
+        '\u039c': 'M',  # Greek Μ
+        '\u039d': 'N',  # Greek Ν
+        '\u039f': 'O',  # Greek Ο
+        '\u03a1': 'R',  # Greek Ρ
+        '\u03a4': 'T',  # Greek Τ
+        '\u03a7': 'X',  # Greek Χ
+        # Mathematical/fullwidth
+        '\uff49': 'i',  # Fullwidth i
+        '\uff4f': 'o',  # Fullwidth o
+        '\uff41': 'a',  # Fullwidth a
+        '\uff45': 'e',  # Fullwidth e
+        '\u2139': 'i',  # Information source (looks like i)
+        '\u01a0': 'O',  # Latin O with horn
+    })
+    confusable_approx = text.translate(_CONFUSABLES)
+
+    # Return all three forms joined — patterns match across any
+    return ascii_approx + " " + confusable_approx + " " + nfkd
+
+
+def detect_injection(text: str, _recursive: bool = False) -> Tuple[bool, Optional[str]]:
     """
     Check text for prompt injection patterns.
+    Runs on NFKD-normalized text to catch homoglyph attacks.
     
     Returns:
         (is_injection, pattern_type) — pattern_type is the first matched 
@@ -97,23 +163,63 @@ def detect_injection(text: str) -> Tuple[bool, Optional[str]]:
     if not text or not text.strip():
         return False, None
 
+    # Run detection on normalized copy to defeat homoglyph/lookalike attacks
+    normalized = _normalize_for_detection(text)
+
     for compiled, raw in zip(_COMPILED_INJECTION, INJECTION_PATTERNS):
-        if compiled.search(text):
+        if compiled.search(normalized):
             return True, raw
 
+    # Encoding checks only on top-level calls (not recursive sub-checks)
+    if _recursive:
+        return False, None
+
     # ── Base64-encoded injection check ───────────────────────────────────
-    # Check for base64 strings that decode to injection attempts
     import base64
     b64_pattern = re.compile(r'[A-Za-z0-9+/]{20,}={0,2}')
     for match in b64_pattern.finditer(text):
         try:
             decoded = base64.b64decode(match.group()).decode('utf-8', errors='ignore')
             if decoded and len(decoded) > 10:
-                sub_detected, sub_type = detect_injection(decoded)
+                sub_detected, sub_type = detect_injection(decoded, _recursive=True)
                 if sub_detected:
                     return True, f"base64_encoded:{sub_type}"
         except Exception:
             pass
+
+    # ── Hex-encoded injection check ───────────────────────────────────────
+    hex_pattern = re.compile(r'(?:0x)?(?:[0-9a-fA-F]{2}){8,}')
+    for match in hex_pattern.finditer(text):
+        try:
+            decoded = bytes.fromhex(match.group().replace('0x', '')).decode('utf-8', errors='ignore')
+            if decoded and len(decoded) > 5:
+                sub_detected, sub_type = detect_injection(decoded, _recursive=True)
+                if sub_detected:
+                    return True, f"hex_encoded:{sub_type}"
+        except Exception:
+            pass
+
+    # ── URL-encoded injection check ───────────────────────────────────────
+    if '%' in text:
+        try:
+            from urllib.parse import unquote
+            url_decoded = unquote(text)
+            if url_decoded != text:
+                sub_detected, sub_type = detect_injection(url_decoded, _recursive=True)
+                if sub_detected:
+                    return True, f"url_encoded:{sub_type}"
+        except Exception:
+            pass
+
+    # ── ROT13-encoded injection check ─────────────────────────────────────
+    rot13_decoded = text.translate(str.maketrans(
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+        'NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm'
+    ))
+    if rot13_decoded != text:
+        sub_detected, sub_type = detect_injection(rot13_decoded, _recursive=True)
+        if sub_detected:
+            return True, f"rot13_encoded:{sub_type}"
 
     return False, None
 
