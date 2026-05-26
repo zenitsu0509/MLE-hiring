@@ -14,19 +14,23 @@ from typing import List, Optional
 from openai import OpenAI
 
 from config import (
+    AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_VERSION, AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_API_KEY,
     OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_BASE_URL,
     GOOGLE_API_KEY, GEMINI_MODEL,
     TEMPERATURE, MAX_OUTPUT_TOKENS,
     MAX_RETRIES, RETRY_BASE_DELAY,
 )
+from openai import AzureOpenAI
 
-# ── Configure OpenRouter client ──────────────────────────────────────────
-_openrouter_client = None
-if OPENROUTER_API_KEY:
-    _openrouter_client = OpenAI(
-        base_url=OPENROUTER_BASE_URL,
-        api_key=OPENROUTER_API_KEY,
+# ── Configure Azure OpenAI client ────────────────────────────────────────
+_azure_client = None
+if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT:
+    _azure_client = AzureOpenAI(
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        api_key=AZURE_OPENAI_API_KEY,
+        api_version=AZURE_OPENAI_API_VERSION,
     )
+
 
 # ── Configure Gemini fallback ────────────────────────────────────────────
 _gemini_model = None
@@ -173,13 +177,13 @@ def _extract_json(raw: str) -> dict:
     raise ValueError(f"Could not extract JSON from response: {raw[:200]}...")
 
 
-def _call_openrouter(system_prompt: str, user_prompt: str) -> dict:
-    """Call OpenRouter using OpenAI-compatible API."""
-    if not _openrouter_client:
-        raise RuntimeError("OpenRouter client not configured (missing OPENROUTER_API_KEYS)")
+def _call_azure(system_prompt: str, user_prompt: str) -> dict:
+    """Call Azure OpenAI."""
+    if not _azure_client:
+        raise RuntimeError("Azure client not configured (missing AZURE_OPENAI_API_KEY or ENDPOINT)")
 
-    completion = _openrouter_client.chat.completions.create(
-        model=OPENROUTER_MODEL,
+    completion = _azure_client.chat.completions.create(
+        model=AZURE_OPENAI_DEPLOYMENT,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -216,7 +220,7 @@ def call_llm(ticket_text: str, corpus_context: str,
     """
     Call the LLM with retry logic and fallback.
     
-    Primary: OpenRouter (model from .env)
+    Primary: Azure OpenAI
     Fallback: Gemini 2.5 Flash
     """
     user_prompt = _build_prompt(ticket_text, corpus_context, valid_paths,
@@ -224,17 +228,17 @@ def call_llm(ticket_text: str, corpus_context: str,
 
     last_error = None
 
-    # ── Try OpenRouter primary ───────────────────────────────────────────
+    # ── Try Azure primary ───────────────────────────────────────────
     for attempt in range(MAX_RETRIES):
         try:
-            result = _call_openrouter(SYSTEM_PROMPT, user_prompt)
+            result = _call_azure(SYSTEM_PROMPT, user_prompt)
             result = _post_process_result(result, max_bm25_score, pii_detected)
             return result
         except Exception as e:
             last_error = e
             if attempt < MAX_RETRIES - 1:
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
-                print(f"  [OpenRouter/{OPENROUTER_MODEL}] Attempt {attempt + 1} failed: {e}. Retrying in {delay}s...")
+                print(f"  [AzureOpenAI] Attempt {attempt + 1} failed: {e}. Retrying in {delay}s...")
                 time.sleep(delay)
 
     # ── Fallback to Gemini ───────────────────────────────────────────────
