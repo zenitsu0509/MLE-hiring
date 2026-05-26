@@ -348,7 +348,7 @@ def main():
             traceback.print_exc()
             return idx, make_fallback_response(row_dict, str(e))
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         futures = []
         for idx, row in df.iterrows():
             futures.append(executor.submit(process_wrapper, (idx, row.to_dict())))
