@@ -1,0 +1,15 @@
+c02a5d6 docs: add architecture documentation and update environment configuration variables
+d57a51b update output
+db81663 add Homoglyph bypasses
+7fc3bb8 update final answer
+504befb  improved JSON extraction (handles truncated responses) and workers back to 5
+82db467 feat: implement automated support ticket generation and comparison scripts
+96ed445 update:Brier Score Confidence Calibration
+6995c27 reduce recurrent request to 5
+8542553 try azure model
+796228e feat: implement agent orchestration and automated comparison utility for support ticket classification evaluation
+f1f6c5c feat:implement first prototpye
+db4ccc0 Remove results announced date
+e162ec0 Update deadline to 1 week and replace AI judge with 1-on-1 interview
+99a0e0e Update submission instructions with Google Forms link
+ec78098 Initial commit: MLE Hiring Challenge Template (10/10 Difficulty)
